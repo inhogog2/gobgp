@@ -1,15 +1,17 @@
 # Policy Configuration
 
-This page explains GoBGP policy feature for controlling the route
+This page explains LoxiLB with GoBGP policy feature for controlling the route
 advertisement. It might be called Route Map in other BGP
 implementations.
 
 We explain the overview firstly, then the details.
 
 ## Prerequisites
+Assumed that you run loxilb with `-b` option. Or If you control loxilb through kube-loxilb, be sure to set the `--set-bgp` option in the kube-loxilb.yaml file.
 
-Assumed that you finished [Getting Started](getting-started.md).
-
+```bash
+docker run -u root --cap-add SYS_ADMIN --restart unless-stopped --privileged -dit -v /dev/log:/dev/log --name loxilb ghcr.io/loxilb-io/loxilb:latest -b
+```
 ## Contents
 
 - [Policy Configuration](#policy-configuration)
@@ -36,9 +38,7 @@ Assumed that you finished [Getting Started](getting-started.md).
       - [Execution condition of Action](#execution-condition-of-action)
         - [Examples](#examples-5)
     - [4. Attaching policy](#4-attaching-policy)
-      - [4.1 Attach policy to global rib](#41-attach-policy-to-global-rib)
-      - [4.2. Attach policy to route-server-client](#42-attach-policy-to-route-server-client)
-  - [Policy Configuration Example](#policy-configuration-example)
+      - [4.1. Attach policy to route-server-client](#41-attach-policy-to-route-server-client)
   - [Policy and Soft Reset](#policy-and-soft-reset)
 
 ## Overview
@@ -128,14 +128,11 @@ statement are executed.
 You can check policy configuration by the following commands.
 
 ```shell
-$ gobgp policy
-$ gobgp policy statement
-$ gobgp policy prefix
-$ gobgp policy neighbor
-$ gobgp policy as-path
-$ gobgp policy community
-$ gobgp policy ext-community
-$ gobgp policy large-community
+$ kubectl get bgppolicydefinedsets
+
+$ kubectl get bgppolicydefinition
+
+$ kubectl get bgppolicyapply
 ```
 
 ## Configure Policies
@@ -160,15 +157,14 @@ Below are the steps for policy configuration
 
 1. define defined-sets
     1. define prefix-sets
-    1. define neighbor-sets
-1. define bgp-defined-sets
+    2. define neighbor-sets
+2. define bgp-defined-sets
     1. define community-sets
-    1. define ext-community-sets
-    1. define as-path-setList
-    1. define large-community-sets
-1. define policy-definitions
-1. attach policies to global rib (or neighbor local rib when neighbor is
-   [route-server-client](route-server.md)).
+    2. define ext-community-sets
+    3. define as-path-setList
+    4. define large-community-sets
+3. define policy-definitions
+4. attach neighbor
 
 ### 1. Defining defined-sets
 
@@ -180,18 +176,31 @@ part.
 
 - defined-sets example
 
- ```toml
-# prefix match part
-[[defined-sets.prefix-sets]]
-  prefix-set-name = "ps1"
-  [[defined-sets.prefix-sets.prefix-list]]
-    ip-prefix = "10.33.0.0/16"
-    masklength-range = "21..24"
+ ```yaml
+ # prefix match part
+apiVersion: bgppolicydefinedsets.loxilb.io/v1
+kind: BGPPolicyDefinedSetsService
+metadata:
+  name: policy-prefix
+spec:
+  name: "ps1"
+  definedType: "prefix"
+  prefixList:
+    - ipPrefix: "10.33.0.0/16"
+      masklengthRange: "21..24"
+
 
 # neighbor match part
-[[defined-sets.neighbor-sets]]
-  neighbor-set-name = "ns1"
-  neighbor-info-list = ["10.0.255.1"]
+apiVersion: bgppolicydefinedsets.loxilb.io/v1
+kind: BGPPolicyDefinedSetsService
+metadata:
+  name: policy-neighbor
+spec:
+  name: "ns1"
+  definedType: "neighbor"
+  List:
+  - "10.0.255.1/32"
+
  ```
 
 #### prefix-sets
@@ -200,19 +209,19 @@ prefix-sets has prefix-set-list, and prefix-set-list has prefix-set-name and
 prefix-list as its element. prefix-set-list is used as a condition. Note that
 prefix-sets has either v4 or v6 addresses.
 
-**prefix-set-list** has 1 element and list of sub-elements.
+**prefix** has 1 element and list of sub-elements.
 
-| Element         | Description                        | Example | Optional |
-| --------------- | ---------------------------------- | ------- | -------- |
-| prefix-set-name | name of prefix-set                 | "ps1"   |          |
-| prefix-list     | list of prefix and range of length |         |          |
+| Element | Description | Example | Optional |
+| --- | --- | --- | --- |
+| name | name of prefix-set | "ps1" |  |
+| prefixList | list of prefix and range of length |  |  |
 
 **PrefixList** has 2 elements.
 
-| Element          | Description     | Example        | Optional |
-| ---------------- | --------------- | -------------- | -------- |
-| ip-prefix        | prefix value    | "10.33.0.0/16" |          |
-| masklength-range | range of length | "21..24"       | Yes      |
+| Element | Description | Example | Optional |
+| --- | --- | --- | --- |
+| ipPrefix | prefix value | "10.33.0.0/16" |  |
+| masklengthRange | range of length | "21..24" | Yes |
 
 ##### Examples
 
@@ -222,14 +231,20 @@ prefix-sets has either v4 or v6 addresses.
   - If you define a prefix-list that doesn't have MasklengthRange, it matches
     routes that have just 10.33.0.0/16 as NLRI.
 
-  ```toml
-  # example 1
-  [[defined-sets.prefix-sets]]
-    prefix-set-name = "ps1"
-    [[defined-sets.prefix-sets.prefix-list]]
-      ip-prefix = "10.33.0.0/16"
-      masklength-range = "21..24"
-  ```
+```yaml
+# example 1
+apiVersion: bgppolicydefinedsets.loxilb.io/v1
+kind: BGPPolicyDefinedSetsService
+metadata:
+  name: policy-prefix
+spec:
+  name: "ps1"
+  definedType: "prefix"
+  prefixList:
+    - ipPrefix: "10.33.0.0/16"
+      masklengthRange: "21..24"
+      
+```
 
 - example 2
   - If you want to evaluate multiple routes with a single prefix-set-list, you
@@ -237,36 +252,50 @@ prefix-sets has either v4 or v6 addresses.
   - This prefix-set-list match checks if a route has 10.33.0.0/21 to 24 or
     10.50.0.0/21 to 24.
 
-  ```toml
-  # example 2
-  [[defined-sets.prefix-sets]]
-    prefix-set-name = "ps1"
-    [[defined-sets.prefix-sets.prefix-list]]
-      ip-prefix = "10.33.0.0/16"
-      masklength-range = "21..24"
-    [[defined-sets.prefix-sets.prefix-list]]
-      ip-prefix = "10.50.0.0/16"
-      masklength-range = "21..24"
-  ```
+```yaml
+# example 2
+apiVersion: bgppolicydefinedsets.loxilb.io/v1
+kind: BGPPolicyDefinedSetsService
+metadata:
+  name: policy-prefix
+spec:
+  name: "ps1"
+  definedType: "prefix"
+  prefixList:
+    - ipPrefix: "10.33.0.0/16"
+      masklengthRange: "21..24"
+    - ipPrefix: "10.50.0.0/16"
+      masklengthRange: "21..24"
+```
 
 - example 3
   - prefix-set-name under prefix-set-list is reference to a single prefix-set.
   - If you want to add different prefix-set more, you can add other blocks that
     form the same structure with example 1.
 
-  ```toml
-  # example 3
-  [[defined-sets.prefix-sets]]
-    prefix-set-name = "ps1"
-    [[defined-sets.prefix-sets.prefix-list]]
-      ip-prefix = "10.33.0.0/16"
-      masklength-range = "21..24"
-  [[defined-sets.prefix-sets]]
-    prefix-set-name = "ps2"
-    [[defined-sets.prefix-sets.prefix-list]]
-      ip-prefix = "10.50.0.0/16"
-      masklength-range = "21..24"
-  ```
+```yaml
+apiVersion: bgppolicydefinedsets.loxilb.io/v1
+kind: BGPPolicyDefinedSetsService
+metadata:
+  name: policy-prefix
+spec:
+  name: "ps1"
+  definedType: "prefix"
+  prefixList:
+    - ipPrefix: "10.33.0.0/16"
+      masklengthRange: "21..24"
+---
+apiVersion: bgppolicydefinedsets.loxilb.io/v1
+kind: BGPPolicyDefinedSetsService
+metadata:
+  name: policy-prefix
+spec:
+  name: "ps2"
+  definedType: "prefix"
+  prefixList:
+    - ipPrefix: "10.50.0.0/16"
+      masklengthRange: "21..24"
+```
 
 #### neighbor-sets
 
@@ -276,58 +305,87 @@ specify a neighbor address in neighbor-info-list. neighbor-set-list is used as
 a condition.
 *Attention: an empty neighbor-set will match against ANYTHING and not invert based on the match option*
 
-**neighbor-set-list** has 1 element and list of sub-elements.
+**neighbor** has 1 element and list of sub-elements.
 
-| Element            | Description              | Example | Optional |
-| ------------------ | ------------------------ | ------- | -------- |
-| neighbor-set-name  | name of neighbor-set     | "ns1"   |          |
-| neighbor-info-list | list of neighbor address |         |          |
+| Element | Description | Example | Optional |
+| --- | --- | --- | --- |
+| name | name of neighbor | "ns1" |  |
+| List | list of neighbor address |  |  |
 
 **neighbor-info-list** has 1 element.
 
-| Element | Description      | Example      | Optional |
-| ------- | ---------------- | ------------ | -------- |
-| address | neighbor address | "10.0.255.1" |          |
+| Element | Description | Example | Optional |
+| --- | --- | --- | --- |
+| - | neighbor address | "10.0.255.1" |  |
 
 ##### Examples
 
 - example 1
 
-  ```toml
-  # example 1
-  [[defined-sets.neighbor-sets]]
-    neighbor-set-name = "ns1"
-    neighbor-info-list = ["10.0.255.1"]
-  # Prefix representations are also acceptable.
-  [[defined-sets.neighbor-sets]]
-    neighbor-set-name = "ns2"
-    neighbor-info-list = ["10.0.0.0/24"]
-  ```
+```yaml
+apiVersion: bgppolicydefinedsets.loxilb.io/v1
+kind: BGPPolicyDefinedSetsService
+metadata:
+  name: policy-neighbor
+spec:
+  name: "ns1"
+  definedType: "neighbor"
+  List:
+  - "10.0.255.1/32"
+---
+apiVersion: bgppolicydefinedsets.loxilb.io/v1
+kind: BGPPolicyDefinedSetsService
+metadata:
+  name: policy-neighbor
+spec:
+  name: "ns2"
+  definedType: "neighbor"
+  List:
+  - "10.0.0.0/24"
+```
 
 - example 2
   - As with prefix-set-list, neighbor-set-list can have multiple
     neighbor-info-list like this.
 
-  ```toml
-  # example 2
-  [[defined-sets.neighbor-sets]]
-    neighbor-set-name = "ns1"
-    neighbor-info-list = ["10.0.255.1", "10.0.255.2"]
+```yaml
+# example 2
+apiVersion: bgppolicydefinedsets.loxilb.io/v1
+kind: BGPPolicyDefinedSetsService
+metadata:
+  name: policy-neighbor
+spec:
+  name: "ns1"
+  definedType: "neighbor"
+  List:
+  - "10.0.255.1/32"
+  - "10.0.255.2/32"
   ```
 
 - example 3
   - As with prefix-set-list, multiple neighbor-set-lists can be defined.
 
-  ```toml
-  # example 3
-  [[defined-sets.neighbor-sets]]
-    neighbor-set-name = "ns1"
-    neighbor-info-list = ["10.0.255.1"]
-  # another neighbor-set-list
-  [[defined-sets.neighbor-sets]]
-    neighbor-set-name = "ns2"
-    neighbor-info-list = ["10.0.254.1"]
-  ```
+```yaml
+apiVersion: bgppolicydefinedsets.loxilb.io/v1
+kind: BGPPolicyDefinedSetsService
+metadata:
+  name: policy-neighbor
+spec:
+  name: "ns1"
+  definedType: "neighbor"
+  List:
+  - "10.0.255.1/32"
+---
+apiVersion: bgppolicydefinedsets.loxilb.io/v1
+kind: BGPPolicyDefinedSetsService
+metadata:
+  name: policy-neighbor
+spec:
+  name: "ns2"
+  definedType: "neighbor"
+  List:
+  - "10.0.254.1/32"
+```
 
 ### 2. Defining bgp-defined-sets
 
@@ -340,40 +398,67 @@ set can have multiple values.
 
 - bgp-defined-sets example
 
- ```toml
- # Community match part
- [[defined-sets.bgp-defined-sets.community-sets]]
-   community-set-name = "community1"
-   community-list = ["65100:10"]
- # Extended Community match part
- [[defined-sets.bgp-defined-sets.ext-community-sets]]
-   ext-community-set-name = "ecommunity1"
-   ext-community-list = ["RT:65100:10"]
- # AS_PATH match part
- [[defined-sets.bgp-defined-sets.as-path-sets]]
-   as-path-set-name = "aspath1"
-   as-path-list = ["^65100"]
- # Large Community match part
- [[defined-sets.bgp-defined-sets.large-community-sets]]
-   large-community-set-name = "lcommunity1"
-   large-community-list = ["65100:100:100"]
- ```
+```yaml
+# Community match part
+apiVersion: bgppolicydefinedsets.loxilb.io/v1
+kind: BGPPolicyDefinedSetsService
+metadata:
+  name: policy-community
+spec:
+  name: "community1"
+  definedType: "community"
+  List:
+  - "65100:10"
+
+# Extended Community match part
+apiVersion: bgppolicydefinedsets.loxilb.io/v1
+kind: BGPPolicyDefinedSetsService
+metadata:
+  name: policy-extcommunity
+spec:
+  name: "ecommunity1"
+  definedType: "extcommunity"
+  List:
+  - "RT:65100:100"
+
+# AS_PATH match part
+apiVersion: bgppolicydefinedsets.loxilb.io/v1
+kind: BGPPolicyDefinedSetsService
+metadata:
+  name: policy-aspath
+spec:
+  name: "aspath1"
+  definedType: "asPath"
+  List:
+    - "^65100"
+    
+# Large Community match part
+apiVersion: bgppolicydefinedsets.loxilb.io/v1
+kind: BGPPolicyDefinedSetsService
+metadata:
+  name: policy-largecommunity
+spec:
+  name: "lcommunity1"
+  definedType: "largecommunity"
+  List:
+  - "65100:100:100"
+```
 
 #### community-sets
 
 community-sets has community-set-name and community-list as its element. The
 Community value are used to evaluate communities held by the destination.
 
-| Element            | Description             | Example      | Optional |
-| ------------------ | ----------------------- | ------------ | -------- |
-| community-set-name | name of CommunitySet    | "community1" |          |
-| community-list     | list of community value |              |          |
+| Element | Description | Example | Optional |
+| --- | --- | --- | --- |
+| name | name of CommunitySet | "community1" |  |
+| List | list of community value |  |  |
 
 **community-list** has 1 element.
 
-| Element   | Description     | Example    | Optional |
-| --------- | --------------- | ---------- | -------- |
-| community | community value | "65100:10" |          |
+| Element | Description | Example | Optional |
+| --- | --- | --- | --- |
+| - | community value | "65100:10" |  |
 
 You can use regular expressions to specify community in community-list.
 
@@ -382,23 +467,35 @@ You can use regular expressions to specify community in community-list.
 - example 1
   - Match routes which has "65100:10" as a community value.
 
-  ```toml
-  # example 1
-  [[defined-sets.bgp-defined-sets.community-sets]]
-    community-set-name = "community1"
-    community-list = ["65100:10"]
-  ```
+```yaml
+# example 1
+apiVersion: bgppolicydefinedsets.loxilb.io/v1
+kind: BGPPolicyDefinedSetsService
+metadata:
+  name: policy-community
+spec:
+  name: "community1"
+  definedType: "community"
+  List:
+  - "65100:10"
+```
 
 - example 2
   - Specifying community by regular expression
   - You can use regular expressions based on POSIX 1003.2 regular expressions.
 
-  ```toml
-  # example 2
-  [[defined-sets.bgp-defined-sets.community-sets]]
-    community-set-name = "community2"
-    community-list = ["6[0-9]+:[0-9]+"]
-  ```
+```yaml
+# example 2
+apiVersion: bgppolicydefinedsets.loxilb.io/v1
+kind: BGPPolicyDefinedSetsService
+metadata:
+  name: policy-community
+spec:
+  name: "community2"
+  definedType: "community"
+  List:
+  - "6[0-9]+:[0-9]+"
+```
 
 #### ext-community-sets
 
@@ -406,16 +503,16 @@ ext-community-sets has ext-community-set-name and ext-community-list as its
 element. The values are used to evaluate extended communities held by the
 destination.
 
-| Element                | Description                      | Example       | Optional |
-| ---------------------- | -------------------------------- | ------------- | -------- |
-| ext-community-set-name | name of ExtCommunitySet          | "ecommunity1" |          |
-| ext-community-list     | list of extended community value |               |          |
+| Element | Description | Example | Optional |
+| --- | --- | --- | --- |
+| name | name of ExtCommunitySet | "ecommunity1" |  |
+| List | list of extended community value |  |  |
 
-**ext-community-list** has 1 element.
+**List** has 1 element.
 
-| Element       | Description              | Example        | Optional |
-| ------------- | ------------------------ | -------------- | -------- |
-| ext-community | extended community value | "RT:65001:200" |          |
+| Element | Description | Example | Optional |
+| --- | --- | --- | --- |
+| - | extended community value | "RT:65001:200" |  |
 
 You can use regular expressions to specify extended community in
 ext-community-list. However, the first one element separated by (part of "RT")
@@ -443,48 +540,51 @@ subtype of extended community and subtypes that can be used are as follows:
 - example 1
   - Match routes which has "RT:65001:200" as a extended community value.
 
-  ```toml
-  # example 1
-  [[defined-sets.bgp-defined-sets.ext-community-sets]]
-    ext-community-set-name = "ecommunity1"
-    ext-community-list = ["RT:65100:200"]
-  ```
+```yaml
+# example 1
+apiVersion: bgppolicydefinedsets.loxilb.io/v1
+kind: BGPPolicyDefinedSetsService
+metadata:
+  name: policy-extcommunity
+spec:
+  name: "ecommunity1"
+  definedType: "extcommunity"
+  List:
+  - "RT:65100:100"
+```
 
 - example 2
   - Specifying extended community by regular expression
   - You can use regular expressions that is available in Golang.
 
-  ```toml
-  # example 2
-  [[defined-sets.bgp-defined-sets.ext-community-sets]]
-    ext-community-set-name = "ecommunity2"
-    ext-community-list = ["RT:6[0-9]+:[0-9]+"]
-  ```
-
-- example 3
-  - Specify link-bandwidth extended community.
-
-  ```toml
-  # example 3
-  [policy-definitions.statements.actions.bgp-actions.set-ext-community.set-ext-community-method]
-    communities-list = ["LB:65001:125000"]
-  ```
+```yaml
+# example 2
+apiVersion: bgppolicydefinedsets.loxilb.io/v1
+kind: BGPPolicyDefinedSetsService
+metadata:
+  name: policy-extcommunity
+spec:
+  name: "ecommunity2"
+  definedType: "extcommunity"
+  List:
+  - "RT:6[0-9]+:[0-9]+"
+```
 
 #### as-path-sets
 
 as-path-sets has as-path-set-name and as-path-list as its element. The numbers
 are used to evaluate AS numbers in the destination's AS_PATH attribute.
 
-| Element          | Description           | Example   | Optional |
-| ---------------- | --------------------- | --------- | -------- |
-| as-path-set-name | name of as-path-set   | "aspath1" |          |
-| as-path-list     | list of as path value |           |          |
+| Element | Description | Example | Optional |
+| --- | --- | --- | --- |
+| name | name of as-path-set | "aspath1" |  |
+| List | list of as path value |  |  |
 
-**as-path-list** has 1 elements.
+**List** has 1 elements.
 
-| Element     | Description   | Example  | Optional |
-| ----------- | ------------- | -------- | -------- |
-| as-path-set | as path value | "^65100" |          |
+| Element | Description | Example | Optional |
+| --- | --- | --- | --- |
+| - | as path value | "^65100" |  |
 
 The AS path regular expression is compatible with
 [Quagga](http://www.nongnu.org/quagga/docs/docs-multi/AS-Path-Regular-Expression.html)
@@ -507,23 +607,35 @@ Some examples follow:
 - example 1
   - Match routes which come from AS 65100.
 
-  ```toml
-  # example 1
-  [[defined-sets.bgp-defined-sets.as-path-sets]]
-    as-path-set-name = "aspath1"
-    as-path-list = ["^65100_"]
-  ```
+```yaml
+# example 1
+apiVersion: bgppolicydefinedsets.loxilb.io/v1
+kind: BGPPolicyDefinedSetsService
+metadata:
+  name: policy-aspath
+spec:
+  name: "aspath1"
+  definedType: "asPath"
+  List:
+    - "^65100"
+```
 
 - example 2
   - Match routes which come Origin AS 65100 and use regular expressions to
     other AS.
 
-  ```toml
-  # example 2
-  [[defined-sets.bgp-defined-sets.as-path-sets]]
-    as-path-set-name = "aspath1"
-    as-path-list = ["[0-9]+_65[0-9]+_65100$"]
-  ```
+```yaml
+# example 2
+apiVersion: bgppolicydefinedsets.loxilb.io/v1
+kind: BGPPolicyDefinedSetsService
+metadata:
+  name: policy-aspath
+spec:
+  name: "aspath1"
+  definedType: "asPath"
+  List:
+    - "[0-9]+_65[0-9]+_65100$"
+```
 
 ### 3. Defining policy-definitions
 
@@ -532,125 +644,135 @@ evaluate routes from neighbors, if matched, action will be applied.
 
 - an example of policy-definitions
 
-```toml
-  [[policy-definitions]]
-    name = "example-policy"
-    [[policy-definitions.statements]]
-      name = "statement1"
-      [policy-definitions.statements.conditions.match-prefix-set]
-        prefix-set = "ps1"
-        match-set-options = "any"
-      [policy-definitions.statements.conditions.match-neighbor-set]
-        neighbor-set = "ns1"
-        match-set-options = "invert"
-      [policy-definitions.statements.conditions.bgp-conditions.match-community-set]
-        community-set = "community1"
-        match-set-options = "any"
-      [policy-definitions.statements.conditions.bgp-conditions.match-ext-community-set]
-        community-set = "ecommunity1"
-        match-set-options = "any"
-      [policy-definitions.statements.conditions.bgp-conditions.match-as-path-set]
-        as-path-set = "aspath1"
-        match-set-options = "any"
-      [policy-definitions.statements.conditions.bgp-conditions.as-path-length]
-        operator = "eq"
-        value = 2
-      [policy-definitions.statements.conditions.bgp-conditions]
-        afi-safi-in = ["l3vpn-ipv4-unicast", "ipv4-unicast"]
-      [policy-definitions.statements.actions]
-        route-disposition = "accept-route"
-      [policy-definitions.statements.actions.bgp-actions]
-        set-med = "-200"
-        [policy-definitions.statements.actions.bgp-actions.set-as-path-prepend]
-          as = "65005"
-          repeat-n = 5
-        [policy-definitions.statements.actions.bgp-actions.set-community]
-          options = "add"
-          [policy-definitions.statements.actions.bgp-actions.set-community.set-community-method]
-            communities-list = ["65100:20"]
- ```
+```yaml
+apiVersion: bgppolicydefinition.loxilb.io/v1
+kind: BGPPolicyDefinitionService
+metadata:
+  name: example-policy
+spec:
+  name: example-policy
+  statements:
+  - name: statement1
+    conditions:
+      matchPrefixSet:
+        prefixSet: ps1
+        matchSetOptions: any
+      matchNeighborSet:
+        neighborSet: ns1
+        matchSetOptions: invert
+      bgpConditions:
+        matchCommunitySet:
+          communitySet: community1
+          matchSetOptions: any
+        matchExtCommunitySet:
+          communitySet: ecommunity1
+          matchSetOptions: any
+        matchAsPathSet:
+          asPathSet: aspath1
+          matchSetOptions: any
+        asPathLength:
+          operator: eq
+          value: 2
+        afiSafiIn:
+          - l3vpn-ipv4-unicast
+          - ipv4-unicast
+    actions:
+      routeDisposition: accept-route
+      bgpActions:
+        setMed: "-200"
+        setAsPathPrepend:
+          as: "65005"
+          repeatN: 5
+        setCommunity:
+          options: add
+          setCommunityMethod:
+            communitiesList:
+              - 65100:20  
+
+```
 
  The elements of policy-definitions are as follows:
 
 - policy-definitions
-
-  | Element | Description   | Example          |
-  | ------- | ------------- | ---------------- |
-  | name    | policy's name | "example-policy" |
-
-- policy-definitions.statements
-
-  | Element | Description       | Example      |
-  | ------- | ----------------- | ------------ |
-  | name    | statements's name | "statement1" |
-
-- policy-definitions.statements.conditions.match-prefix-set
-
-  | Element           | Description                                                                   | Example |
-  | ----------------- | ----------------------------------------------------------------------------- | ------- |
-  | prefix-set        | name for defined-sets.prefix-sets.prefix-set-list that is used in this policy | "ps1"   |
-  | match-set-options | option for the check:<br> "any" or "invert". default is "any"                 | "any"   |
-
-- policy-definitions.statements.conditions.match-neighbor-set
-
-  | Element           | Description                                                                       | Example |
-  | ----------------- | --------------------------------------------------------------------------------- | ------- |
-  | neighbor-set      | name for defined-sets.neighbor-sets.neighbor-set-list that is used in this policy | "ns1"   |
-  | match-set-options | option for the check:<br> "any" or "invert". default is "any"                     | "any"   |
-
-- policy-definitions.statements.conditions.bgp-conditions.match-community-set
-
-  | Element           | Description                                                                                        | Example      |
-  | ----------------- | -------------------------------------------------------------------------------------------------- | ------------ |
-  | community-set     | name for defined-sets.bgp-defined-sets.community-sets.CommunitySetList that is used in this policy | "community1" |
-  | match-set-options | option for the check:<br> "any" or "all" or "invert". default is "any"                             | "invert"     |
-
-- policy-definitions.statements.conditions.bgp-conditions.match-ext-community-set
-
-  | Element           | Description                                                                           | Example       |
-  | ----------------- | ------------------------------------------------------------------------------------- | ------------- |
-  | ext-community-set | name for defined-sets.bgp-defined-sets.ext-community-sets that is used in this policy | "ecommunity1" |
-  | match-set-options | option for the check:<br> "any" or "all" or "invert". default is "any"                | "invert"      |
-
-- policy-definitions.statements.conditions.bgp-conditions.match-as-path-set
-
-  | Element           | Description                                                                     | Example   |
-  | ----------------- | ------------------------------------------------------------------------------- | --------- |
-  | as-path-set       | name for defined-sets.bgp-defined-sets.as-path-sets that is used in this policy | "aspath1" |
-  | match-set-options | option for the check:<br> "any" or "all" or "invert". default is "any"          | "invert"  |
-
-- policy-definitions.statements.conditions.bgp-conditions.match-as-path-length
-
-  | Element  | Description                                                                                                                                                                                                                                                                                                                                   | Example |
-  | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-  | operator | operator to compare the length of AS number in AS_PATH attribute. <br> "eq","ge","le" can be used. <br> "eq" means that length of AS number is equal to Value element <br> "ge" means that length of AS number is equal or greater than the Value element <br> "le" means that length of AS number is equal or smaller than the Value element | "eq"    |
-  | value    | value used to compare with the length of AS number in AS_PATH attribute                                                                                                                                                                                                                                                                       | 2       |
-
-- policy-definitions.statements.actions
-
-  | Element           | Description                                                                                                  | Example        |
-  | ----------------- | ------------------------------------------------------------------------------------------------------------ | -------------- |
-  | route-disposition | stop following policy/statement evaluation and accept/reject the route:<br> "accept-route" or "reject-route" | "accept-route" |
-
-- policy-definitions.statements.actions.bgp-actions
-
-  | Element | Description                                                                                                                                                                                                                        | Example |
-  | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-  | set-med | set-med used to change the med value of the route. <br> If only numbers have been specified, replace the med value of route.<br> if number and operater(+ or -) have been specified, adding or subtracting the med value of route. | "-200"  |
-
-- policy-definitions.statements.actions.bgp-actions.set-community
-
-  | Element     | Description                                                                     | Example    |
-  | ----------- | ------------------------------------------------------------------------------- | ---------- |
-  | options     | operator to manipulate Community attribute in the route                         | "ADD"      |
-  | communities | communities used to manipulate the route's community according to options below | "65100:20" |
-
-- policy-definitions.statements.actions.bgp-actions.set-as-path-prepend
-
-  | Element  | Description                                                                                            | Example |
-  | -------- | ------------------------------------------------------------------------------------------------------ | ------- |
-  | as       | AS number to prepend. You can use "last-as" to prepend the leftmost AS number in the aspath attribute. | "65100" |
-  | repeat-n | repeat count to prepend AS                                                                             | 5       |
+    
+    
+    | Element | Description | Example |
+    | --- | --- | --- |
+    | name | policy's name | "example-policy" |
+- statements
+    
+    
+    | Element | Description | Example |
+    | --- | --- | --- |
+    | name | statements's name | "statement1" |
+- conditions - match-prefix-set
+    
+    
+    | Element | Description | Example |
+    | --- | --- | --- |
+    | prefixSet | name for defined-sets.prefix-sets.prefix-set-list that is used in this policy | "ps1" |
+    | matchSetOptions | option for the check:<br> "any" or "invert". default is "any" | "any" |
+- conditions - match-neighbor-set
+    
+    
+    | Element | Description | Example |
+    | --- | --- | --- |
+    | neighborSet | name for defined-sets.neighbor-sets.neighbor-set-list that is used in this policy | "ns1" |
+    | matchSetOptions | option for the check:<br> "any" or "invert". default is "any" | "any" |
+- conditions - bgp-conditions - match-community-set
+    
+    
+    | Element | Description | Example |
+    | --- | --- | --- |
+    | communitySet | name for defined-sets.bgp-defined-sets.community-sets.CommunitySetList that is used in this policy | "community1" |
+    | matchSetOptions | option for the check:<br> "any" or "all" or "invert". default is "any" | "invert" |
+- conditions - bgp-conditions - match-ext-community-set
+    
+    
+    | Element | Description | Example |
+    | --- | --- | --- |
+    | communitySet | name for defined-sets.bgp-defined-sets.ext-community-sets that is used in this policy | "ecommunity1" |
+    | matchSetOptions | option for the check:<br> "any" or "all" or "invert". default is "any" | "invert" |
+- conditions - bgp-conditions - match-as-path-set
+    
+    
+    | Element | Description | Example |
+    | --- | --- | --- |
+    | asPathSet | name for defined-sets.bgp-defined-sets.as-path-sets that is used in this policy | "aspath1" |
+    | matchSetOptions | option for the check:<br> "any" or "all" or "invert". default is "any" | "invert" |
+- conditions - bgp-conditions - match-as-path-length
+    
+    
+    | Element | Description | Example |
+    | --- | --- | --- |
+    | operator | operator to compare the length of AS number in AS_PATH attribute. <br> "eq","ge","le" can be used. <br> "eq" means that length of AS number is equal to Value element <br> "ge" means that length of AS number is equal or greater than the Value element <br> "le" means that length of AS number is equal or smaller than the Value element | "eq" |
+    | value | value used to compare with the length of AS number in AS_PATH attribute | 2 |
+- statements - actions
+    
+    
+    | Element | Description | Example |
+    | --- | --- | --- |
+    | routeDisposition | stop following policy/statement evaluation and accept/reject the route:<br> "accept-route" or "reject-route" | "accept-route" |
+- statements - actions - bgp-actions
+    
+    
+    | Element | Description | Example |
+    | --- | --- | --- |
+    | setMed | set-med used to change the med value of the route. <br> If only numbers have been specified, replace the med value of route.<br> if number and operater(+ or -) have been specified, adding or subtracting the med value of route. | "-200" |
+- statements - actions - bgp-actions - set-community
+    
+    
+    | Element | Description | Example |
+    | --- | --- | --- |
+    | options | operator to manipulate Community attribute in the route | "ADD" |
+    | communities | communities used to manipulate the route's community according to options below | "65100:20" |
+- statements - actions - bgp-actions - set-as-path-prepend
+    
+    
+    | Element | Description | Example |
+    | --- | --- | --- |
+    | as | AS number to prepend. You can use "last-as" to prepend the leftmost AS number in the aspath attribute. | "65100" |
+    | repeatN | repeat count to prepend AS | 5 |
 
 #### Execution condition of Action
 
@@ -671,78 +793,103 @@ evaluate routes from neighbors, if matched, action will be applied.
   - This policy definition has prefix-set *ps1* and neighbor-set *ns1* as its
     condition and routes matches the condition is rejected.
 
-  ```toml
-  # example 1
-  [[policy-definitions]]
-    name = "policy1"
-    [[policy-definitions.statements]]
-      name = "statement1"
-      [policy-definitions.statements.conditions.match-prefix-set]
-        prefix-set = "ps1"
-      [policy-definitions.statements.conditions.match-neighbor-set]
-        neighbor-set = "ns1"
-      [policy-definitions.statements.actions]
-        route-disposition = "reject-route"
-  ```
+```yaml
+# example 1
+apiVersion: bgppolicydefinition.loxilb.io/v1
+kind: BGPPolicyDefinitionService
+metadata:
+  name: policy1
+spec:
+  name: policy1
+  statements:
+  - name: statement1
+    conditions:
+      matchPrefixSet:
+        prefixSet: ps1
+        matchSetOptions: any
+      matchNeighborSet:
+        neighborSet: ns1
+        matchSetOptions: any
+    actions:
+      routeDisposition: reject-route
+```
 
 - example 2
   - policy-definition has two statements
   - If a route matches the condition inside the first statement(1), GoBGP
     applies its action and quits the policy evaluation.
 
-  ```toml
-  # example 2
-  [[policy-definitions]]
-    name = "policy1"
-    # first statement - (1)
-    [[policy-definitions.statements]]
-      name = "statement1"
-      [policy-definitions.statements.conditions.match-prefix-set]
-        prefix-set = "ps1"
-      [policy-definitions.statements.conditions.match-neighbor-set]
-        neighbor-set = "ns1"
-      [policy-definitions.statements.actions]
-        route-disposition = "reject-route"
-    # second statement - (2)
-    [[policy-definitions.statements]]
-      name = "statement2"
-      [policy-definitions.statements.conditions.match-prefix-set]
-        prefix-set = "ps2"
-      [policy-definitions.statements.conditions.match-neighbor-set]
-        neighbor-set = "ns2"
-      [policy-definitions.statements.actions]
-        route-disposition = "reject-route"
-  ```
+```yaml
+# example 2
+apiVersion: bgppolicydefinition.loxilb.io/v1
+kind: BGPPolicyDefinitionService
+metadata:
+  name: policy1
+spec:
+  name: policy1
+  statements:
+  - name: statement1
+    conditions:
+      matchPrefixSet:
+        prefixSet: ps1
+        matchSetOptions: any
+      matchNeighborSet:
+        neighborSet: ns1
+        matchSetOptions: any
+    actions:
+      routeDisposition: reject-route
+  - name: statement2
+    conditions:
+      matchPrefixSet:
+        prefixSet: ps2
+        matchSetOptions: any
+      matchNeighborSet:
+        neighborSet: ns2
+        matchSetOptions: any
+    actions:
+      routeDisposition: reject-route
+```
 
 - example 3
   - If you want to add other policies, just add policy-definitions block
     following the first one like this
 
-  ```toml
-  # example 3
-  # first policy
-  [[policy-definitions]]
-    name = "policy1"
-    [[policy-definitions.statements]]
-      name = "statement1"
-      [policy-definitions.statements.conditions.match-prefix-set]
-        prefix-set = "ps1"
-      [policy-definitions.statements.conditions.match-neighbor-set]
-        neighbor-set = "ns1"
-      [policy-definitions.statements.actions]
-        route-disposition = "reject-route"
-  # second policy
-  [[policy-definitions]]
-    name = "policy2"
-    [[policy-definitions.statements]]
-      name = "statement2"
-      [policy-definitions.statements.conditions.match-prefix-set]
-        prefix-set = "ps2"
-      [policy-definitions.statements.conditions.match-neighbor-set]
-        neighbor-set = "ns2"
-      [policy-definitions.statements.actions]
-        route-disposition = "reject-route"
-  ```
+```yaml
+apiVersion: bgppolicydefinition.loxilb.io/v1
+kind: BGPPolicyDefinitionService
+metadata:
+  name: policy1
+spec:
+  name: policy1
+  statements:
+  - name: statement1
+    conditions:
+      matchPrefixSet:
+        prefixSet: ps1
+        matchSetOptions: any
+      matchNeighborSet:
+        neighborSet: ns1
+        matchSetOptions: any
+    actions:
+      routeDisposition: reject-route
+---
+apiVersion: bgppolicydefinition.loxilb.io/v1
+kind: BGPPolicyDefinitionService
+metadata:
+  name: policy2
+spec:
+  name: policy2
+  - name: statement2
+    conditions:
+      matchPrefixSet:
+        prefixSet: ps2
+        matchSetOptions: any
+      matchNeighborSet:
+        neighborSet: ns2
+        matchSetOptions: any
+    actions:
+      routeDisposition: reject-route
+```
 
 - example 4
   - This PolicyDefinition has multiple conditions including BgpConditions as
@@ -757,103 +904,59 @@ evaluate routes from neighbors, if matched, action will be applied.
     "65100:20", next-hop 10.0.0.1, local-pref 110, med subtracted 200, as-path
     prepended 65005 five times.
 
-  ```toml
-  # example 4
-  [[policy-definitions]]
-    name = "policy1"
-    [[policy-definitions.statements]]
-      name = "statement1"
-      [policy-definitions.statements.conditions.match-prefix-set]
-        prefix-set = "ps1"
-      [policy-definitions.statements.conditions.match-neighbor-set]
-        neighbor-set = "ns1"
-      [policy-definitions.statements.conditions.bgp-conditions.match-community-set]
-        community-set = "community1"
-      [policy-definitions.statements.conditions.bgp-conditions.match-ext-community-set]
-        community-set = "ecommunity1"
-      [policy-definitions.statements.conditions.bgp-conditions.match-as-path-set]
-        community-set = "aspath1"
-      [policy-definitions.statements.conditions.bgp-conditions.as-path-length]
-        operator = "eq"
-        value = 2
-      [policy-definitions.statements.actions]
-        route-disposition = "accept-route"
-      [policy-definitions.statements.actions.bgp-actions]
-        set-med = "-200"
-        set-next-hop = "10.0.0.1"
-        set-local-pref = 110
-      [policy-definitions.statements.actions.bgp-actions.set-as-path-prepend]
-        as = "65005"
-        repeat-n = 5
-      [policy-definitions.statements.actions.bgp-actions.set-community]
-        options = "ADD"
-      [policy-definitions.statements.actions.bgp-actions.set-community.set-community-method]
-        communities-list = ["65100:20"]
-  ```
-
-- example 5
-  - example of multiple statement
-
-  ```toml
-  # example 5
-  [[policy-definitions]]
-    name = "policy1"
-    [[policy-definitions.statements]]
-    # statement without route-disposition continues to the next statement
-      [policy-definitions.statements.actions.bgp-actions]
-        set-med = "+100"
-        set-next-hop = "self"
-    [[policy-definitions.statements]]
-    # if matched with "ps1", reject the route and stop evaluating
-    # following statements
-      [policy-definitions.statements.conditions.match-prefix-set]
-        prefix-set = "ps1"
-      [policy-definitions.statements.actions]
-        route-disposition = "reject-route"
-    [[policy-definitions.statements]]
-    # if matched with "ps2", accept the route and stop evaluating
-    # following statements
-      [policy-definitions.statements.conditions.match-prefix-set]
-        prefix-set = "ps2"
-      [policy-definitions.statements.actions]
-        route-disposition = "accept-route"
-    [[policy-definitions.statements]]
-    # since this is the last statement, if the route matched with "ps3",
-    # add 10 to MED value and continue to the next policy if exists.
-    # If not, default-policy is applied.
-      [policy-definitions.statements.conditions.match-prefix-set]
-        prefix-set = "ps3"
-      [policy-definitions.statements.actions.bgp-actions]
-        set-med = "+10"
-        set-next-hop = "unchanged"
-  ```
+```yaml
+# example 4
+apiVersion: bgppolicydefinition.loxilb.io/v1
+kind: BGPPolicyDefinitionService
+metadata:
+  name: example-policy
+spec:
+  name: example-policy
+  statements:
+  - name: statement1
+    conditions:
+      matchPrefixSet:
+        prefixSet: ps1
+        matchSetOptions: any
+      matchNeighborSet:
+        neighborSet: ns1
+        matchSetOptions: invert
+      bgpConditions:
+        matchCommunitySet:
+          communitySet: community1
+          matchSetOptions: any
+        matchExtCommunitySet:
+          communitySet: ecommunity1
+          matchSetOptions: any
+        matchAsPathSet:
+          asPathSet: aspath1
+          matchSetOptions: any
+        asPathLength:
+          operator: eq
+          value: 2
+        afiSafiIn:
+          - l3vpn-ipv4-unicast
+          - ipv4-unicast
+    actions:
+      routeDisposition: accept-route
+      bgpActions:
+        setMed: "-200"
+        setAsPathPrepend:
+          as: "65005"
+          repeatN: 5
+        setCommunity:
+          options: add
+          setCommunityMethod:
+            communitiesList:
+              - 65100:20  
+```
 
 ### 4. Attaching policy
 
 Here we explain how to attach defined policies to
-[global rib](#41-attach-policy-to-global-rib) and [neighbor local rib](#42-attach-policy-to-route-server-client).
+[neighbor local rib](#42-attach-policy-to-route-server-client).
 
-#### 4.1 Attach policy to global rib
-
-To attach policies to global rib, add policy name to
-`global.apply-policy.config`.
-
-```toml
-[global.apply-policy.config]
-import-policy-list = ["policy1"]
-export-policy-list = ["policy2"]
-default-import-policy = "accept-route"
-default-export-policy = "accept-route"
-```
-
-| Element               | Description                                                                                                                                                                 | Example        |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
-| import-policy         | policy-definitions.name for Import policy                                                                                                                                   | "policy1"      |
-| export-policy         | policy-definitions.name for Export policy                                                                                                                                   | "policy2"      |
-| default-import-policy | action when the route doesn't match any policy or none of the matched policy specifies `route-disposition`:<br> "accept-route" or "reject-route". default is "accept-route" | "accept-route" |
-| default-export-policy | action when the route doesn't match any policy or none of the matched policy specifies `route-disposition`:<br> "accept-route" or "reject-route". default is "accept-route" | "accept-route" |
-
-#### 4.2. Attach policy to route-server-client
+#### 4.1. Attach policy to route-server-client
 
 You can use policies defined above as Import or Export or In policy by
 attaching them to neighbors which is configured to be route-server client.
@@ -863,127 +966,28 @@ To attach policies to neighbors, you need to add policy's name to
 This example attaches *policy1* to Import policy and *policy2* to Export policy
 and *policy3* is used as the In policy.
 
-```toml
-[[neighbors]]
-  [neighbors.config]
-    neighbor-address = "10.0.255.2"
-    peer-as = 65002
-  [neighbors.route-server.config]
-    route-server-client = true
-  [neighbors.apply-policy.config]
-    import-policy-list = ["policy1"]
-    export-policy-list = ["policy2"]
-    default-import-policy = "accept-route"
-    default-export-policy = "accept-route"
+```yaml
+apiVersion: bgppolicyapply.loxilb.io/v1
+kind: BGPPolicyApplyService
+metadata:
+  name: policy-apply
+spec:
+  ipAddress: "10.0.255.2"
+  policyType: "import"
+  polices:
+  - "policy1"
+  routeAction: "accept"
 ```
 
 neighbors has a section to specify policies and the section's name is
-apply-policy. The apply-policy has 6 elements.
+apply-policy. The apply-policy has 4 elements.
 
-| Element               | Description                                                                                                                                                                 | Example        |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
-| import-policy         | policy-definitions.name for Import policy                                                                                                                                   | "policy1"      |
-| export-policy         | policy-definitions.name for Export policy                                                                                                                                   | "policy2"      |
-| default-import-policy | action when the route doesn't match any policy or none of the matched policy specifies `route-disposition`:<br> "accept-route" or "reject-route". default is "accept-route" | "accept-route" |
-| default-export-policy | action when the route doesn't match any policy or none of the matched policy specifies `route-disposition`:<br> "accept-route" or "reject-route". default is "accept-route" | "accept-route" |
-
-## Policy Configuration Example
-
-Neighbor 10.0.255.1 advertises 10.33.0.0/16 and 10.3.0.0/16 routes. We
-define an import policy for neighbor 10.0.255.2 that drops
-10.33.0.0/16 route from Neighbor 10.0.255.1.
-
-```toml
-[global.config]
-  as = 64512
-  router-id = "192.168.255.1"
-
-[[neighbors]]
-  [neighbors.config]
-    neighbor-address = "10.0.255.1"
-    peer-as = 65001
-  [neighbors.route-server.config]
-    route-server-client = true
-
-[[neighbors]]
-  [neighbors.config]
-    neighbor-address = "10.0.255.2"
-    peer-as = 65002
-  [neighbors.route-server.config]
-    route-server-client = true
-  [neighbors.apply-policy.config]
-    import-policy-list = ["pd2"]
-
-[[neighbors]]
-  [neighbors.config]
-    neighbor-address = "10.0.255.3"
-    peer-as = 65003
-  [neighbors.route-server.config]
-    route-server-client = true
-
-[[defined-sets.prefix-sets]]
-  prefix-set-name = "ps2"
-  [[defined-sets.prefix-sets.prefix-list]]
-    ip-prefix = "10.33.0.0/16"
-  [[defined-sets.prefix-sets.prefix-list]]
-    ip-prefix = "10.50.0.0/16"
-
-[[defined-sets.neighbor-sets]]
-  neighbor-set-name = "ns1"
-  [[defined-sets.neighbor-sets.neighbor-info-list]]
-    address = "10.0.255.1"
-
-[[policy-definitions]]
-  name = "pd2"
-  [[policy-definitions.statements]]
-    name = "statement1"
-    [policy-definitions.statements.conditions.match-prefix-set]
-      prefix-set = "ps2"
-      match-set-options = "any"
-    [policy-definitions.statements.conditions.match-neighbor-set]
-      neighbor-set = "ns1"
-      match-set-options = "any"
-    [policy-definitions.statements.actions]
-      route-disposition = "reject-route"
-```
-
-Neighbor 10.0.255.2 has pd2 policy. The pd2 policy consists of ps2 prefix match
-and ns1 neighbor match. The ps2 specifies 10.33.0.0 and 10.50.0.0 address. The
-ps2 specifies the mask with **MASK** keyword. **masklength-range** keyword can
-specify the range of mask length like ```masklength-range 24..26```. The *ns1*
-specifies neighbor 10.0.255.1.
-
-The pd2 sets multiple condition, This means that only when all match conditions
-meets, the policy will be applied.
-
-The match-prefix-set sets match-set-options to "any". This means that when
-match to any of prefix-list, the policy will be applied. the policy will be
-applied to 10.33.0.0/16 or 10.50.0.0 route from neighbor 10.0.255.1.
-
-If the match-prefix-set sets match-set-options to "invert", It does not match
-to any of prefix-list, the policy will be applied. the policy will be applied
-to other than 10.33.0.0/16 or 10.50.0.0 route from neighbor 10.0.255.1
-
-Let's confirm that 10.0.255.1 neighbor advertises two routes.
-
-```bash
-$ gobgp neighbor 10.0.255.1 adj-in
-   Network            Next Hop        AS_PATH    Age        Attrs
-   10.3.0.0/16        10.0.255.1      [65001]    00:51:57   [{Origin: 0} {Med: 0}]
-   10.33.0.0/16       10.0.255.1      [65001]    00:51:57   [{Origin: 0} {Med: 0}]
-```
-
-Now let's check out if the policy works as expected.
-
-```bash
-$ gobgp neighbor 10.0.255.2 local
-   Network            Next Hop        AS_PATH    Age        Attrs
-*> 10.3.0.0/16        10.0.255.1      [65001]    00:49:36   [{Origin: 0} {Med: 0}]
-$ gobgp neighbor 10.0.255.3 local
-   Network            Next Hop        AS_PATH    Age        Attrs
-*> 10.3.0.0/16        10.0.255.1      [65001]    00:49:38   [{Origin: 0} {Med: 0}]
-*> 10.33.0.0/16       10.0.255.1      [65001]    00:49:38   [{Origin: 0} {Med: 0}]
-```
+| Element | Description | Example |
+| --- | --- | --- |
+| ipAddress | neighbor IP address | "10.0.255.2" |
+| policyType | option for the Policy type:<br> "import" or "export" . | "import" |
+| polices | The list of the policy |   - "policy1" |
+| routeAction | action when the route doesn't match any policy or none of the matched policy specifies route-disposition:<br> "accept" or "reject".  | "accept" |
 
 ## Policy and Soft Reset
 
