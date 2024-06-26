@@ -128,11 +128,11 @@ statement are executed.
 You can check policy configuration by the following commands.
 
 ```shell
-$ kubectl get bgppolicydefinedsets
+$ kubectl get bgppolicydefinedsetsservice
 
-$ kubectl get bgppolicydefinition
+$ kubectl get bgppolicydefinitionservice
 
-$ kubectl get bgppolicyapply
+$ kubectl get bgppolicyapplyservice
 ```
 
 ## Configure Policies
