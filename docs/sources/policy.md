@@ -80,7 +80,7 @@ with respect to a peer.  The **Import** policy defines what routes
 will be imported into the master RIB. The **Export** policy defines
 what routes will be exported from the master RIB.
 
-You can check each policy by the following commands.
+You can check each policy by the following commands in the loxilb.
 
 ```shell
 $ gobgp neighbor <neighbor-addr> policy import
