@@ -1,3 +1,20 @@
+# License 
+This document is based on the original work by [GOBGP](https://github.com/osrg/gobgp.git).
+Changes have been made to the original document.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+
 # Policy Configuration
 
 This page explains LoxiLB with GoBGP policy feature for controlling the route
@@ -33,7 +50,6 @@ For examples in gobgp, please refer to the following [documents](https://github.
   - [Prerequisites](#prerequisites)
   - [Contents](#contents)
   - [Overview](#overview)
-  - [Policy Model](#policy-model)
   - [Route Server Policy Model](#route-server-policy-model)
   - [Policy Structure](#policy-structure)
   - [Configure Policies](#configure-policies)
