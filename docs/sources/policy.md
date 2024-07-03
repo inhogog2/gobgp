@@ -12,6 +12,19 @@ Assumed that you run loxilb with `-b` option. Or If you control loxilb through k
 ```bash
 docker run -u root --cap-add SYS_ADMIN --restart unless-stopped --privileged -dit -v /dev/log:/dev/log --name loxilb ghcr.io/loxilb-io/loxilb:latest -b
 ```
+or in the kube-loxilb.yaml
+
+```
+        args:
+            - --loxiURL=http://12.12.12.1:11111
+            - --externalCIDR=123.123.123.1/24
+            - --setBGP=65100
+
+```
+(Note) Currently, gobgp does not support the Policy command in global state. Therefore, only the policy for neighbors is applied, and we plan to apply the global policy through additional development.
+To apply a policy in a neighbor, you must form a peer by adding the route-server-client option when using gobgp in loxilb. This does not provide a separate API and will be provided in the future.
+For examples in gobgp, please refer to the following [documents](https://github.com/osrg/gobgp/blob/master/docs/sources/route-server.md).
+
 ## Contents
 
 - [Policy Configuration](#policy-configuration)
