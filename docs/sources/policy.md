@@ -22,7 +22,7 @@ or in the kube-loxilb.yaml
 
 ```
 (Note) Currently, gobgp does not support the Policy command in global state. Therefore, only the policy for neighbors is applied, and we plan to apply the global policy through additional development.
-To apply a policy in a neighbor, you must form a peer by adding the route-server-client option when using gobgp in loxilb. This does not provide a separate API and will be provided in the future.
+To apply a policy in a neighbor, you must form a peer by adding the `route-server-client` option when using gobgp in loxilb. This does not provide a separate API and will be provided in the future.
 For examples in gobgp, please refer to the following [documents](https://github.com/osrg/gobgp/blob/master/docs/sources/route-server.md).
 
 ## Contents
@@ -67,23 +67,6 @@ the route), `aspath` etc.., and **Action** like `accept`, `reject`,
 
 You can configure policy by configuration file, CLI or gRPC API.
 Here, we show how to configure policy via configuration file.
-
-## Policy Model
-
-The following figure shows how policy works in normal BGP configuration.
-
-![policy model](./policy.png)
-
-There are **Import** and **Export** policy. **Import** policy is invoked
-before best path calculation and pushing routes to RIB.
-**Export** policy is invoked after that.
-
-You can check each policy by the following commands.
-
-```shell
-$ gobgp global policy import
-$ gobgp global policy export
-```
 
 ## Route Server Policy Model
 
