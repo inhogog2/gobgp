@@ -991,4 +991,3 @@ When you change an import policy and reset the inbound routing table (aka soft r
 
 The outbound routing table doesn't exist for saving memory usage, it's impossible to know whether the route was actually sent to peer or the route also was rejected by the previous export policies and not sent. GoBGP doesn't send such withdraw rather than possible unwilling leaking information.
 
-Please report if other implementations such as bird work in a different way.
